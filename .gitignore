@@ -1,0 +1,22 @@
+# History files
+.Rhistory
+.Rapp.history
+
+# Session Data
+.RData
+
+# User-specific files
+.Rproj.user/
+
+# Data files - NUNCA adicione dados brutos ao git
+*.csv
+*.xlsx
+data/
+
+# Knitr and R Markdown cache files
+*_cache/
+/cache/
+
+# Common temp files
+*.utf8.md
+*.knit.md
