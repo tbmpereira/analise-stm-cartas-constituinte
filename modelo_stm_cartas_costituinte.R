@@ -12,6 +12,8 @@ library(tidyverse) # Para manipulação de dados (dplyr, readr, etc.)
 library(stm)       # O pacote principal para o modelo
 library(lubridate) # Para trabalhar com datas
 library(janitor)   # Para limpar nomes de colunas
+library(broom)
+library(tidytext)
 
 # ---
 # Passo 1: Carregar e Limpar os Dados
@@ -143,9 +145,39 @@ summary(stm_model)
 
 # Visualizar as palavras mais prováveis de cada tópico
 # Mostra as palavras mais importantes para cada um dos 20 tópicos
-labelTopics(stm_model)
+labelTopics(stm_model, n = 10)
+
+labelTopics(stm_model, n = 10, frexweight = 0.5)
 
 # Gráfico com a proporção esperada de cada tópico no corpus
 plot(stm_model, type = "summary", text.cex = 0.8, main = "Proporção dos Tópicos no Corpus")
 
-# Mais análises e visualizações virão na próxima etapa!
+# Lembre-se, K_escolhido é o número de tópicos (ex: 20)
+# A fórmula deve conter todas as covariáveis que você quer analisar.
+efeitos <- estimateEffect(
+  formula = 1:K_escolhido ~ uf + sexo + faixa_etaria + instrucao + morador + atividade,
+  stmobj = stm_model,
+  meta = out$meta,
+  uncertainty = "Global"
+)
+
+# Dê uma olhada na estrutura do objeto para ver o que ele contém
+summary(efeitos)
+
+# Converter efeitos em uma tibble
+tabela_coeficientes <- broom::tidy(efeitos)
+
+tab9 <- tabela_coeficientes %>% filter(topic == 9)
+
+print(tab9, n = Inf)
+
+# Gráfico de Prevalência por UF para o Tópico 18
+# Explorando a hipótese: A discussão sobre 'Reforma Agrária' é mais prevalente em moradores da zona rural?
+plot(efeitos,
+     covariate = "sexo",
+     topic = 11, # Mude para o número do seu tópico de desmatamento
+     method = "pointestimate",
+     main = "Prevalência do Tópico 'Desmatamento' por Estado (UF)",
+     xlab = "Sexo",
+     ylab = "Proporção Esperada do Tópico",
+     cex.names = 0.7) # Ajusta o tamanho dos nomes para caber no gráfico
