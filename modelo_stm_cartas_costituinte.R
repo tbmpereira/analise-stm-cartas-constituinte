@@ -1,183 +1,256 @@
-# --- SCRIPT PARA MODELAGEM DE TÓPICOS ESTRUTURAIS (STM) ---
+# -------------------------------------------------------------------------- #
+# SCRIPT PARA ANÁLISE DE TÓPICOS ESTRUTURAIS (STM)
+# Análise das Sugestões da Sociedade sobre Meio Ambiente para a Constituinte
+# -------------------------------------------------------------------------- #
 
-# Passo 0: Instalar e Carregar Pacotes
-# -------------------------------------------------------------------
+# ========================================================================== #
+# 0. CONFIGURAÇÃO INICIAL (SETUP)
+# ========================================================================== #
+
+# --- Comentário Metodológico ---
+# Carregamos todos os pacotes necessários para a análise. O 'stm' é o pacote
+# central para a modelagem. O 'tidyverse' (com 'dplyr', 'ggplot2', etc.) é
+# usado para a manipulação e visualização dos dados. 'tidytext' e 'broom'
+# nos ajudam a extrair e organizar os resultados do modelo de forma limpa.
+
 # Se for a primeira vez, instale os pacotes (remova o '#' da frente)
-# install.packages("tidyverse")
-install.packages("stm")
-install.packages("lubridate")
-install.packages("janitor")
+# install.packages(c("tidyverse", "stm", "lubridate", "janitor", "broom", "tidytext"))
 
-library(tidyverse) # Para manipulação de dados (dplyr, readr, etc.)
-library(stm)       # O pacote principal para o modelo
-library(lubridate) # Para trabalhar com datas
-library(janitor)   # Para limpar nomes de colunas
+library(tidyverse)
+library(stm)
+library(lubridate)
+library(janitor)
 library(broom)
 library(tidytext)
+library(forcats)
 
-# ---
-# Passo 1: Carregar e Limpar os Dados
-# -------------------------------------------------------------------
-# Substitua "caminho/para/seu/arquivo.csv" pelo local do seu arquivo
-# Assumimos que o seu dataframe se chama 'df' como no diagnóstico.
-# Se já carregou os dados, pule esta linha.
-setwd("C:/Users/mapereira/Downloads")
+# ========================================================================== #
+# 1. CARREGAMENTO E FILTRAGEM DOS DADOS
+# ========================================================================== #
 
+# --- Comentário Metodológico ---
+# O ponto de partida é o conjunto de dados completo. Para focar a análise,
+# filtramos o corpus para reter apenas as sugestões explicitamente relacionadas
+# à pauta ambiental. Isso aumenta a coerência temática do modelo final.
+
+# Define o diretório de trabalho (altere para o seu caminho)
+setwd("C:/Users/Marcelo/Downloads")
+
+# Carrega a base de dados
 df <- read_csv2("Base SAIC.csv", locale = locale(encoding = "Latin1"))
 
-cartas <- df |> 
-  mutate(across(where(is.character), ~ str_trim(.)))  # remove espaços nas pontas
-
-cartas <- cartas |> 
+# Limpa nomes das colunas e remove espaços em branco
+cartas <- df %>%
+  mutate(across(where(is.character), ~ str_trim(.))) %>%
   clean_names()
 
-# Lista de palavras
-palavras <- c(
-  "meio ambiente", "ecologia", "ecologica", "ecológica", "ecologico", "ecológico", 
+# Define as palavras-chave para filtrar o corpus ambiental
+palavras_chave_ambiental <- c(
+  "meio ambiente", "ecologia", "ecologica", "ecológica", "ecologico", "ecológico",
   "flora", "fauna", "poluicao", "poluição"
 )
+regex_busca <- str_c(palavras_chave_ambiental, collapse = "|")
 
-# Monta expressão regular única, escapando acentos e espaços se necessário
-regex_busca <- str_c(palavras, collapse = "|")
+# Filtra as cartas que contêm as palavras-chave no catálogo ou na indexação
+cartas_filtradas <- cartas %>%
+  filter(str_detect(str_to_lower(catalogo), regex_busca) |
+           str_detect(str_to_lower(indexacao), regex_busca))
 
-# Filtra as linhas com qualquer uma das palavras (case-insensitive)
-cartas_filtradas <- cartas |> 
-  filter(str_detect(str_to_lower(catalogo), str_to_lower(regex_busca)))
 
-# ---
-# Passo 2: Pré-processar as Covariáveis (Metadados)
-# -------------------------------------------------------------------
-# O STM precisa de metadados bem formatados.
+# ========================================================================== #
+# 2. PRÉ-PROCESSAMENTO DAS COVARIÁVEIS
+# ========================================================================== #
+
+# --- Comentário Metodológico ---
+# Nesta etapa, preparamos os metadados que serão usados no modelo.
+# Variáveis categóricas são convertidas para o tipo 'fator'. É crucial
+# definir as categorias de referência para a análise de regressão. As
+# referências foram escolhidas para representar grupos de comparação
+# relevantes (e.g., SP como polo populacional, MASCULINO como grupo
+# majoritário na amostra, etc.). Valores ausentes (NA) são convertidos
+# em uma categoria explícita para evitar a perda de dados.
+
 df_processado <- cartas_filtradas %>%
-  # Remover linhas onde o texto da sugestão está vazio ou é NA
   filter(!is.na(sugestao_texto), sugestao_texto != "") %>%
-  
-  # Converter as principais covariáveis categóricas para o tipo 'fator'
-  # A função 'fct_explicit_na' transforma NAs em uma categoria "NA_desconhecido"
-  # Isso é CRUCIAL para não perder dados no modelo.
   mutate(
-    uf = as.factor(uf),
-    sexo = fct_explicit_na(as.factor(sexo), na_level = "NA_desconhecido"),
-    morador = fct_explicit_na(as.factor(morador), na_level = "NA_desconhecido"),
-    instrucao = fct_explicit_na(as.factor(instrucao), na_level = "NA_desconhecido"),
+    uf = fct_relevel(as.factor(uf), "SP"),
+    sexo = fct_relevel(fct_explicit_na(as.factor(sexo), na_level = "NA_desconhecido"), "MASCULINO"),
+    morador = fct_relevel(fct_explicit_na(as.factor(morador), na_level = "NA_desconhecido"), "ZONA RURAL"),
+    instrucao = fct_relevel(fct_explicit_na(as.factor(instrucao), na_level = "NA_desconhecido"), "SEGUNDO GRAU COMPLETO"),
+    faixa_etaria = fct_relevel(fct_explicit_na(as.factor(faixa_etaria), na_level = "NA_desconhecido"), "20 A 24 ANOS"),
     estado_civil = fct_explicit_na(as.factor(estado_civil), na_level = "NA_desconhecido"),
-    faixa_etaria = fct_explicit_na(as.factor(faixa_etaria), na_level = "NA_desconhecido"),
-    atividade = forcats::fct_explicit_na(as.factor(atividade), na_level = "NA_desconhecido"),
-    
-    
-    # Processar a data
-    data_formatada = dmy(data), # Converte "dd/mm/aaaa" para Data
-    ano = year(data_formatada)  # Extrai o ano
+    atividade = fct_explicit_na(as.factor(atividade), na_level = "NA_desconhecido"),
+    ano = year(dmy(data))
   )
 
-# Vamos verificar a estrutura dos dados processados
-glimpse(df_processado)
 
-# ---
-# Passo 3: Processar o Texto
-# -------------------------------------------------------------------
-# Esta função do STM automatiza a limpeza do texto.
+# ========================================================================== #
+# 3. PREPARAÇÃO DOS DOCUMENTOS PARA O STM
+# ========================================================================== #
+
+# --- Comentário Metodológico ---
+# O texto é processado para criar uma matriz de termos e documentos. Etapas
+# incluem conversão para minúsculas, remoção de pontuação, números, stopwords
+# e aplicação de stemming. O limiar inferior ('lower.thresh') remove termos
+# muito raros, o que reduz o ruído e melhora a qualidade do modelo.
+
 processed <- textProcessor(
   documents = df_processado$sugestao_texto,
-  metadata = df_processado, # Anexa os metadados
-  language = "portuguese", # Usa lista de stopwords em português
-  stem = TRUE, # Reduz palavras ao seu radical (ex: politicos, politica -> politic)
+  metadata = df_processado,
+  language = "portuguese",
+  stem = TRUE,
   removepunctuation = TRUE,
   removenumbers = TRUE,
   lowercase = TRUE,
-  customstopwords = c("sugiro", "gostaria", "constituinte") # Adicione palavras que você queira remover
+  customstopwords = c("sugiro", "gostaria", "constituinte")
 )
 
-# ---
-# Passo 4: Preparar os Documentos para o STM
-# -------------------------------------------------------------------
-# Esta é a etapa final de preparação antes de rodar o modelo.
-# 'lower.thresh = 10' remove palavras que aparecem em menos de 10 documentos.
-# Isso ajuda a focar o modelo nos termos mais relevantes.
 out <- prepDocuments(
   documents = processed$documents,
   vocab = processed$vocab,
   meta = processed$meta,
-  lower.thresh = 10
+  lower.thresh = 10 # Remove palavras que aparecem em menos de 10 documentos
 )
-# 'out' agora contém: out$documents, out$vocab, out$meta
 
-# ---
-# Passo 5: Estimar o Modelo STM
-# -------------------------------------------------------------------
-# 5.1 (Opcional, mas recomendado) Encontrar o número ideal de tópicos (K)
-# O código abaixo testa vários valores de K e gera diagnósticos.
-# Pode demorar bastante dependendo do tamanho da base.
-# Se quiser rodá-lo, remova o '#' no início e no fim do bloco.
-#
-search_k <- searchK(
-  out$documents,
-  out$vocab,
-  K = c(10, 15, 20, 25), # Valores de K que você quer testar
-  prevalence = ~ uf + sexo + faixa_etaria,
-  data = out$meta,
-  verbose = TRUE
-)
-plot(search_k)
-#
 
-# 5.2 Estimar o modelo final
-# Escolha um valor de K (número de tópicos). Vamos começar com K=20 como um bom ponto de partida.
-# A fórmula de 'prevalence' define quais metadados influenciarão a frequência dos tópicos.
-K_escolhido <- 20
+# ========================================================================== #
+# 4. ESTIMAÇÃO DO MODELO STM
+# ========================================================================== #
+
+# --- Comentário Metodológico ---
+# Estimamos o modelo STM final. O número de tópicos (K) foi definido como 15
+# com base em análises prévias (searchK) e na interpretabilidade dos tópicos.
+# A fórmula de 'prevalence' especifica quais covariáveis serão usadas para
+# modelar a variação na proporção dos tópicos.
+
+K_escolhido <- 15
 
 stm_model <- stm(
   documents = out$documents,
   vocab = out$vocab,
   K = K_escolhido,
-  prevalence = ~ uf + sexo + faixa_etaria + instrucao + morador + atividade, # Defina aqui suas covariáveis de interesse!
-  max.em.its = 75, # Número máximo de iterações.
+  prevalence = ~ uf + sexo + faixa_etaria + instrucao + morador,
+  max.em.its = 100,
   data = out$meta,
-  init.type = "Spectral", # Método de inicialização
-  verbose = TRUE # Mostra o progresso da estimação
+  init.type = "Spectral",
+  verbose = TRUE
 )
 
-# ---
-# Passo 6: Análise Inicial dos Resultados
-# -------------------------------------------------------------------
-# Ver um resumo do modelo
-summary(stm_model)
 
-# Visualizar as palavras mais prováveis de cada tópico
-# Mostra as palavras mais importantes para cada um dos 20 tópicos
-labelTopics(stm_model, n = 10)
+# ========================================================================== #
+# 5. ANÁLISE DOS EFEITOS DAS COVARIÁVEIS
+# ========================================================================== #
 
-labelTopics(stm_model, n = 10, frexweight = 0.5)
+# --- Comentário Metodológico ---
+# Usamos estimateEffect() para rodar uma série de regressões, investigando
+# o efeito de cada covariável na prevalência de cada um dos 15 tópicos.
+# O resultado é então convertido para um formato 'tidy' (arrumado), o que
+# facilita a filtragem e a visualização subsequente dos resultados.
 
-# Gráfico com a proporção esperada de cada tópico no corpus
-plot(stm_model, type = "summary", text.cex = 0.8, main = "Proporção dos Tópicos no Corpus")
-
-# Lembre-se, K_escolhido é o número de tópicos (ex: 20)
-# A fórmula deve conter todas as covariáveis que você quer analisar.
 efeitos <- estimateEffect(
-  formula = 1:K_escolhido ~ uf + sexo + faixa_etaria + instrucao + morador + atividade,
+  formula = 1:K_escolhido ~ uf + sexo + faixa_etaria + instrucao + morador,
   stmobj = stm_model,
   meta = out$meta,
   uncertainty = "Global"
 )
 
-# Dê uma olhada na estrutura do objeto para ver o que ele contém
-summary(efeitos)
+# Tabela completa com todos os coeficientes, pronta para ser usada
+tabela_coeficientes_completa <- tidy(efeitos)
 
-# Converter efeitos em uma tibble
-tabela_coeficientes <- broom::tidy(efeitos)
 
-tab9 <- tabela_coeficientes %>% filter(topic == 9)
+# ========================================================================== #
+# 6. VISUALIZAÇÃO DOS RESULTADOS
+# ========================================================================== #
 
-print(tab9, n = Inf)
+# -------------------------------------------------------------------------- #
+# 6.1 FUNÇÃO REATORADA PARA PLOTAGEM
+# -------------------------------------------------------------------------- #
 
-# Gráfico de Prevalência por UF para o Tópico 18
-# Explorando a hipótese: A discussão sobre 'Reforma Agrária' é mais prevalente em moradores da zona rural?
-plot(efeitos,
-     covariate = "sexo",
-     topic = 11, # Mude para o número do seu tópico de desmatamento
-     method = "pointestimate",
-     main = "Prevalência do Tópico 'Desmatamento' por Estado (UF)",
-     xlab = "Sexo",
-     ylab = "Proporção Esperada do Tópico",
-     cex.names = 0.7) # Ajusta o tamanho dos nomes para caber no gráfico
+# --- Comentário Metodológico ---
+# Para evitar a repetição de código e facilitar a criação de múltiplos
+# gráficos, criamos uma função chamada 'plot_efeito_covariavel'. Esta função
+# recebe os dados, o tópico, a variável e os títulos desejados, e gera
+# automaticamente um gráfico de "dot-and-whisker", padronizando a visualização.
+
+plot_efeito_covariavel <- function(efeitos_df, num_topico, nome_variavel, ref_completa, titulo, subtitulo, cor) {
+  
+  # Prepara os dados específicos para o gráfico
+  dados_plot <- efeitos_df %>%
+    filter(topic == num_topico, grepl(nome_variavel, term)) %>%
+    add_row(term = ref_completa, estimate = 0, std.error = 0) %>%
+    mutate(term = gsub(nome_variavel, "", term))
+  
+  # Cria o gráfico com ggplot2
+  ggplot(dados_plot, aes(x = estimate, y = reorder(term, estimate))) +
+    geom_vline(xintercept = 0, color = "gray70", linetype = "dashed") +
+    geom_errorbarh(aes(xmin = estimate - 1.96 * std.error,
+                       xmax = estimate + 1.96 * std.error),
+                   height = 0.1, color = "gray50", linewidth = 0.8) +
+    geom_point(color = cor, size = 4) +
+    labs(
+      title = titulo,
+      subtitle = subtitulo,
+      y = nome_variavel,
+      x = "Estimativa do Coeficiente",
+      caption = "Intervalos de confiança de 95%."
+    ) +
+    theme_minimal(base_size = 14)
+}
+
+
+# -------------------------------------------------------------------------- #
+# 6.2 GERAÇÃO DOS GRÁFICOS PARA TÓPICOS E VARIÁVEIS DE INTERESSE
+# -------------------------------------------------------------------------- #
+
+# --- Comentário Metodológico ---
+# Agora, simplesmente chamamos a função que criamos para cada achado
+# significativo que desejamos visualizar. Isso torna o código limpo,
+# legível e fácil de adicionar novos gráficos no futuro.
+
+# --- Gráficos para o Tópico 8: Pesca e Estrutura Administrativa ---
+
+plot_efeito_covariavel(
+  efeitos_tidy = tabela_coeficientes_completa,
+  num_topico = 8,
+  nome_variavel = "morador",
+  ref_completa = "moradorZONA RURAL (Ref.)",
+  titulo = "Efeito da Zona de Moradia no Tópico 8 (Pesca)",
+  subtitulo = "Referência: ZONA RURAL",
+  cor = "#0072B2"
+)
+
+plot_efeito_covariavel(
+  efeitos_tidy = tabela_coeficientes_completa,
+  num_topico = 8,
+  nome_variavel = "instrucao",
+  ref_completa = "instrucaoSEGUNDO GRAU COMPLETO (Ref.)",
+  titulo = "Efeito da Instrução no Tópico 8 (Pesca)",
+  subtitulo = "Referência: SEGUNDO GRAU COMPLETO",
+  cor = "#CC79A7"
+)
+
+
+# --- Gráficos para o Tópico 9: Política Agrícola ---
+
+plot_efeito_covariavel(
+  efeitos_tidy = tabela_coeficientes_completa,
+  num_topico = 9,
+  nome_variavel = "uf",
+  ref_completa = "ufSP (Ref.)",
+  titulo = "Efeito do Estado (UF) no Tópico 9 (Política Agrícola)",
+  subtitulo = "Referência: SP",
+  cor = "#009E73"
+)
+
+
+# --- Gráficos para o Tópico 10: Gestão de Recursos Naturais ---
+
+plot_efeito_covariavel(
+  efeitos_tidy = tabela_coeficientes_completa,
+  num_topico = 10,
+  nome_variavel = "instrucao",
+  ref_completa = "instrucaoSEGUNDO GRAU COMPLETO (Ref.)",
+  titulo = "Efeito da Instrução no Tópico 10 (Recursos Naturais)",
+  subtitulo = "Referência: SEGUNDO GRAU COMPLETO",
+  cor = "#CC79A7"
+)
